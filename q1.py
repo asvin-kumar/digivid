@@ -22,45 +22,122 @@ def blockmeasure(A, B, measure):
     else
         raise Exception('Unknown metric: '+str(measure))
 
-def extractblocks(A, b1, b2, x, y, m, n):
+def getblockindices(i, j, d0q, d1q, blocksize, framesize):
     # Inputs:
-    # A  = input block of some size
-    # b1 = block size along dim 0
-    # b2 = block size along dim 1
-    # x  = starting position of block along dim 0
-    # y  = starting position of block along dim 1
-    # m  = frame size along dim 0
-    # n  = frame size along dim 1
+    # i     = starting index of ref block along dim 0
+    # j     = starting index of ref block along dim 1
+    # d0q   = Query displacements along dim 0
+    # d1q   = Query displacements along dim 1
+    # blocksize = ...
+    # framesize = ...
     # 
     # Returns:
-    # List of frame-sets ~ enables unequal block sizes on edges
-    # All frames in a frame-set have the same size ~ enables parallelism
-    # Block measure functions can be called optimally on each frame-set
+    # List of block-sets ~ enables unequal block sizes on edges
+    # All block in a block-set have the same size ~ enables parallelism
+    # Block measure functions can be called optimally on each block-set
 
+    P = np.zeros((2,1))
+    P[0,0] = i 
+    P[1,0] = j
 
-def compute(metrics, i, j, ):
+    dq = np.vstack(d0q, d1q)
 
+    # For each query point in dq, we will define the following:
+    ref_start   = np.tile(P, (1, dq.shape[1]))
+    ref_end     = ref_start + block_size
+    block_start = P + dq
+    block_end   = block_start + block_size
 
-def getmetrics(frame1, frame2, i, j, blocksize, searchwindow, metrics):
+    # q0 = i+d0q      # 5 + [-3 -2 -1 -3 -2 -1 -3 -2 -1]
+    # q1 = j+d1q      # 3 + [ 2  2  2  1  1  1  0  0  0]
+
+    ## Discard any impossible search idices
+    # block_start of some queries can sometimes take invalid values larger than frame size - discard them
+    tfs         = block_start < framesize
+    idx         = tfs[0,:] and tfs[1,:]
+    ref_start   = ref_start[:,idx]
+    ref_end     = ref_end[:,idx]
+    block_start = block_start[:,idx]
+    block_end   = block_end[:,idx]
+    # block_end of some queries can sometimes take invalid values smaller than frame size - discard them
+    tfs         = block_end > 0
+    idx         = tfs[0,:] and tfs[1,:]
+    ref_start   = ref_start[:,idx]
+    ref_end     = ref_end[:,idx]
+    block_start = block_start[:,idx]
+    block_end   = block_end[:,idx]
+    # block_start of some queries can sometimes take partially invalid negative values - round them carefully
+    tfs                 = block_start < 0
+    idx                 = tfs[0,:] or tfs[1,:]
+    ref_start[:,idx]    = ref_start[:,idx] - block_start[:,idx]
+    ref_end             = ref_end
+    block_start[:,idx]  = 0
+    block_end           = block_end
+    # block_end of some queries can sometimes take partially invalid negative values - round them carefully
+    tfs                 = block_end > framesize
+    idx                 = tfs[0,:] or tfs[1,:]
+    ref_start           = ref_start
+    ref_end[:,idx]      = ref_end[:,idx] - (block_end[:,idx] - framesize)
+    block_start         = block_start
+    block_end[:,idx]    = framesize
+
+    ## Create block-sets for edge cases
+    # Compute dimensions of each query block
+    ref_size    = ref_end   - ref_start
+    block_size  = block_end - block_start
+    assert np.all(ref_size == block_size)
+    # Group based on sizes
+    block_sets = []
+    for x in np.unique(block_size, axis=0):
+        idx = block_size == x
+        block_set.ref_size   = ref_size[idx]
+        block_set.block_size = block_size[idx]
+        block_sets.append(block_set)
+
+    return block_sets
+
+def compute(frame1, frame2, i, j, d0q, d1q, blocksize, metric):
+    
+    # get indices for all block matches to check for
+    block_sets = getblockindices(i, j, d0q, d1q, blocksize, frame1.shape)
+
+    # iterate over each block-set
+    for block_set in block_sets:
+        block_set = block_sets[i]
+
+    # compute metric
+
+def getmetrics(frame1, frame2, i, j, blocksize, searchwindow, metric, metrics):
+    
+    # indices
+    D0 = np.repeat(np.arange(searchwindow[0]), searchwindow[1]) #  0  0  0  1  1  1  2  2  2
+    D1 = np.tile(np.arange(searchwindow[1]), searchwindow[0])   #  0  1  2  0  1  2  0  1  2
+    idx = D0*searchwindow[0]+D1                                 #  0  1  2  3  4  5  6  7  8
+
+    d0 = D0 - searchwindow[0]//2                                # -1 -1 -1  0  0  0  1  1  1
+    d1 = D1 - searchwindow[1]//2                                # -1  0  1 -1  0  1 -1  0  1
+    
+    # dummy variable to store outputs
     localmetrics = np.ones(np.product(searchwindow)) * -1
 
-    for d1 in range(searchwindow[0]):
-        for d2 in range(searchwindow[1]):
-            idx = d1*searchwindow[0]+d2
-            vals = metrics[i-d1, j-d2, :]
-            d1_ = d1 - searchwindow[0]//2
-            d2_ = d2 - searhcwindow[1]//2
-            if np.all(vals == -1):
-                localmetrics[idx] = compute(frame1, frame2, i, j, d1_, d2_, blocksize, searchwindow)
-            else:
-                localmetrics[idx] = val[idx]
+    # query values in "memory"
+    vals = metrics[i+d0, j+d1, :]
+    existing = np.all(vals == -1, axis=1)
+
+    # fetch existing values
+    localmetrics[idx[existing]] = vals[idx]
+
+    # compute non existing values
+    d0q = d0[idx[not existing]]
+    d0q = d1[idx[not existing]]
+    localmetrics[idx[not existing]] = compute(frame1, frame2, i, j, d0q, d0q, blocksize, metric)    
 
     return localmetrics
 
 
 ### Algo
-def fsalgo(frame1, frame2, blocksize, searchwindow):
-    # overall computation of full-search and returns d1,d2 estimates 
+def fsalgo(frame1, frame2, blocksize, searchwindow, metric):
+    # overall computation of full-search and returns d0,d1 estimates 
     # uses subroutines to split tasks
     # uses memoization to avoid redoing computation
 
@@ -73,12 +150,13 @@ def fsalgo(frame1, frame2, blocksize, searchwindow):
 
     for i in range(frame1.shape[0]):
         for j in range(frame1.shape[1]):
-            metrics[i,j,:] = getmetrics(frame1, frame2, i, j, blocksize, searchwindow, metrics)
+            metrics[i,j,:] = getmetrics(frame1, frame2, i, j, blocksize, searchwindow, metric, metrics)
 
+    # find optimal d0, d1 estimates from evaluated distances in search space
     optimal = np.argmin(metrics, axis=2)
-    optimal_d1 = optimal // searchwindow[0] - searchwindow[0] // 2 # check this
-    optimal_d2 = optimal %  searchwindow[1] - searchwindow[1] // 2 # check this
-    optimaldisp = np.stack(optimal_d1, optimal_d2, axis=2)
+    optimal_d0 = optimal // searchwindow[0] - searchwindow[0] // 2 # check this
+    optimal_d1 = optimal %  searchwindow[0] - searchwindow[1] // 2 # check this
+    optimaldisp = np.stack(optimal_d0, optimal_d1, axis=2)
 
     return optimaldisp
 
@@ -89,10 +167,11 @@ def main():
     # hyper-params
     blocksize = [16, 16]
     searchwindow = [48, 48]
+    metric = 'sad'
     
     # load frames
     
     # call algo
-    dispest = fsalgo(frame1, frame2, blocksize, searchwindow)
+    dispest = fsalgo(frame1, frame2, blocksize, searchwindow, metric)
 
     # compare with ground truth

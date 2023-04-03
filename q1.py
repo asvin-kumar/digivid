@@ -1,4 +1,5 @@
 import numpy as np
+from PIL import Image
 
 ### metrics
 def ssd(A, B):
@@ -19,7 +20,7 @@ def blockmeasure(A, B, measure):
         out = mad(A,B)
     elif measure == 'sad':
         out = sad(A,B)
-    else
+    else:
         raise Exception('Unknown metric: '+str(measure))
 
 def getblockindices(i, j, d0q, d1q, blocksize, framesize):
@@ -44,68 +45,91 @@ def getblockindices(i, j, d0q, d1q, blocksize, framesize):
 
     # For each query point in dq, we will define the following:
     ref_start   = np.tile(P, (1, dq.shape[1]))
-    ref_end     = ref_start + block_size
-    block_start = P + dq
-    block_end   = block_start + block_size
+    ref_end     = ref_start + blk_size
+    blk_start = P + dq
+    blk_end   = blk_start + blk_size
+
+    valid       = np.ones((1, dq.shape[1])) * True
 
     # q0 = i+d0q      # 5 + [-3 -2 -1 -3 -2 -1 -3 -2 -1]
     # q1 = j+d1q      # 3 + [ 2  2  2  1  1  1  0  0  0]
 
     ## Discard any impossible search idices
-    # block_start of some queries can sometimes take invalid values larger than frame size - discard them
-    tfs         = block_start < framesize
-    idx         = tfs[0,:] and tfs[1,:]
-    ref_start   = ref_start[:,idx]
-    ref_end     = ref_end[:,idx]
-    block_start = block_start[:,idx]
-    block_end   = block_end[:,idx]
-    # block_end of some queries can sometimes take invalid values smaller than frame size - discard them
-    tfs         = block_end > 0
-    idx         = tfs[0,:] and tfs[1,:]
-    ref_start   = ref_start[:,idx]
-    ref_end     = ref_end[:,idx]
-    block_start = block_start[:,idx]
-    block_end   = block_end[:,idx]
-    # block_start of some queries can sometimes take partially invalid negative values - round them carefully
-    tfs                 = block_start < 0
+    # blk_start of some queries can sometimes take invalid values larger than frame size - discard them
+    tfs             = blk_start < framesize
+    idx             = tfs[0,:] and tfs[1,:]
+    ref_start       = ref_start[:,idx]
+    ref_end         = ref_end[:,idx]
+    blk_start       = blk_start[:,idx]
+    blk_end         = blk_end[:,idx]
+    dq              = dq[:,idx]
+    valid[not idx]  = False
+    # blk_end of some queries can sometimes take invalid values smaller than frame size - discard them
+    tfs             = blk_end > 0
+    idx             = tfs[0,:] and tfs[1,:]
+    ref_start       = ref_start[:,idx]
+    ref_end         = ref_end[:,idx]
+    blk_start       = blk_start[:,idx]
+    blk_end         = blk_end[:,idx]
+    dq              = dq[:,idx]
+    valid[not idx]  = False
+    # blk_start of some queries can sometimes take partially invalid negative values - round them carefully
+    tfs                 = blk_start < 0
     idx                 = tfs[0,:] or tfs[1,:]
-    ref_start[:,idx]    = ref_start[:,idx] - block_start[:,idx]
+    ref_start[:,idx]    = ref_start[:,idx] - blk_start[:,idx]
     ref_end             = ref_end
-    block_start[:,idx]  = 0
-    block_end           = block_end
-    # block_end of some queries can sometimes take partially invalid negative values - round them carefully
-    tfs                 = block_end > framesize
+    blk_start[:,idx]    = 0
+    blk_end             = blk_end
+    # blk_end of some queries can sometimes take partially invalid negative values - round them carefully
+    tfs                 = blk_end > framesize
     idx                 = tfs[0,:] or tfs[1,:]
     ref_start           = ref_start
-    ref_end[:,idx]      = ref_end[:,idx] - (block_end[:,idx] - framesize)
-    block_start         = block_start
-    block_end[:,idx]    = framesize
+    ref_end[:,idx]      = ref_end[:,idx] - (blk_end[:,idx] - framesize)
+    blk_start           = blk_start
+    blk_end[:,idx]      = framesize
 
     ## Create block-sets for edge cases
     # Compute dimensions of each query block
     ref_size    = ref_end   - ref_start
-    block_size  = block_end - block_start
-    assert np.all(ref_size == block_size)
+    blk_size    = blk_end - blk_start
+    assert np.all(ref_size == blk_size)
     # Group based on sizes
-    block_sets = []
-    for x in np.unique(block_size, axis=0):
-        idx = block_size == x
-        block_set.ref_size   = ref_size[idx]
-        block_set.block_size = block_size[idx]
-        block_sets.append(block_set)
+    blk_sets = []
+    for x in np.unique(blk_size, axis=0):
+        idx                 = blk_size == x
+        blk_set.ref_start   = ref_start[:,idx]
+        blk_set.ref_end     = ref_end[:,idx]
+        blk_set.blk_start   = blk_start[:,idx]
+        blk_set.blk_end     = blk_end[:,idx]
+        blk_set.idx         = idx
+        blk_set.blk_size    = x
+        blk_sets.append(blk_set)
 
-    return block_sets
+    return blk_sets, valid
 
 def compute(frame1, frame2, i, j, d0q, d1q, blocksize, metric):
     
+    vals = np.ones(d0q.shape) * -1
+
     # get indices for all block matches to check for
-    block_sets = getblockindices(i, j, d0q, d1q, blocksize, frame1.shape)
+    blk_sets, valid = getblockindices(i, j, d0q, d1q, blocksize, frame1.shape)
 
     # iterate over each block-set
-    for block_set in block_sets:
-        block_set = block_sets[i]
+    for bs in blk_sets:
+        # Setup blocks to measure distance between
+        dim0 = bs.blk_size[0]
+        dim1 = bs.blk_size[1]
+        dim2 = len(bs.ref_start)
+        A = np.zeros((dim0, dim1, dim2))
+        B = np.zeros((dim0, dim1, dim2))
+        for j in range(len(bs.ref_start)):
+            A[:,:,j] = frame1[bs.ref_start[0]:bs.ref_end[0], bs.ref_start[0]:bs.ref_end[1]]
+            B[:,:,j] = frame2[bs.blk_start[0]:bs.blk_end[0], bs.blk_start[0]:bs.blk_end[1]]
+        # compute metric
+        met = blockmeasure(A, B, metric)
+        vals[valid[bs.idx]] = met
 
-    # compute metric
+    return vals
 
 def getmetrics(frame1, frame2, i, j, blocksize, searchwindow, metric, metrics):
     
@@ -129,8 +153,8 @@ def getmetrics(frame1, frame2, i, j, blocksize, searchwindow, metric, metrics):
 
     # compute non existing values
     d0q = d0[idx[not existing]]
-    d0q = d1[idx[not existing]]
-    localmetrics[idx[not existing]] = compute(frame1, frame2, i, j, d0q, d0q, blocksize, metric)    
+    d1q = d1[idx[not existing]]
+    localmetrics[idx[not existing]] = compute(frame1, frame2, i, j, d0q, d1q, blocksize, metric)    
 
     return localmetrics
 
@@ -153,6 +177,7 @@ def fsalgo(frame1, frame2, blocksize, searchwindow, metric):
             metrics[i,j,:] = getmetrics(frame1, frame2, i, j, blocksize, searchwindow, metric, metrics)
 
     # find optimal d0, d1 estimates from evaluated distances in search space
+    metrics[metrics==-1] = 1e10
     optimal = np.argmin(metrics, axis=2)
     optimal_d0 = optimal // searchwindow[0] - searchwindow[0] // 2 # check this
     optimal_d1 = optimal %  searchwindow[0] - searchwindow[1] // 2 # check this
@@ -170,8 +195,11 @@ def main():
     metric = 'sad'
     
     # load frames
-    
+    frame1 = Image.open('other-data-gray/Walking/frame10.png')
+    frame2 = Image.open('other-data-gray/Walking/frame11.png')
+
     # call algo
     dispest = fsalgo(frame1, frame2, blocksize, searchwindow, metric)
 
     # compare with ground truth
+    print(dispest.shape)

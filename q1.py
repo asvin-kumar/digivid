@@ -325,10 +325,21 @@ def main():
     frame1 = io.imread('other-data-gray/Walking/frame10.png')
     frame2 = io.imread('other-data-gray/Walking/frame11.png')
 
-    # call algo
-    dispest = fsalgo(frame1, frame2, blocksize, searchwindow, metric)
+    # call algo and save results
+    # dispest = fsalgo(frame1, frame2, blocksize, searchwindow, metric)
+    # savefilename = 'myresult_'+metric+'_1.mat'
+    # scipy.io.savemat(savefilename, dict(result=dispest))
 
-    scipy.io.savemat('myresult.mat', dict(result=dispest))
+    loadfilename = 'myresult_mad_1.mat'
+    loadobj = scipy.io.loadmat(loadfilename)
+    dispest = loadobj['result']
+
+    refest = scipy.io.loadmat('grove2_flo10.mat')
+    refest = refest['gt']
+
+    rmsediff = np.sum(np.power(dispest-refest, 2), axis=2)
+    maxerr = np.max(rmsediff)
+    print(maxerr)
 
     # compare with ground truth
     print(dispest.shape)

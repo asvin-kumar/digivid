@@ -20,8 +20,9 @@ Q4 uses the UVG dataset found at https://ultravideo.fi/#testsequences.
 This script conmputes statistics on frame 10 from SunBath_3840x2160_50fps_420_8bit_YUV_RAW.7z.    
  
 ## Solutions  
-Solution to questions 1, 2, 4 are in folders `q1/`, `q2/` and `q3/`.  
-Solution to question 3 is in Q3.pdf.  
+Solution to questions 1, 2, 3, 4 are in folders `q1/`, `q2/`, `q3/` and `q4/`. 
+Each of these folders has an .ipynb for interacting with the code and a .pdf export of the same file.
+Please note: I moved these solution files from the base folder into folders for each question to clean things up. Some paths might need to be fixed in order to get the scripts working.
 
 ## Other useful repos
 1. https://github.com/001honi/video-processing/tree/main/homework-1 
